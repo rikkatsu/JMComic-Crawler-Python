@@ -49,5 +49,7 @@ setup(
         'console_scripts': [
             'jmcomic = jmcomic.cl:main'
         ]
-    }
+   }
+
+jmcomic.download_album('422866')
 )
