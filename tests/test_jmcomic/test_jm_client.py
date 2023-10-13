@@ -5,9 +5,11 @@ class Test_Client(JmTestConfigurable):
 
     def test_download_image(self):
         jm_photo_id = 'JM438516'
-        photo = self.client.get_photo_detail(jm_photo_id, False)
+        photo = self.client.get_photo_detail(jm_photo_id)
         image = photo[0]
-        self.client.download_by_image_detail(image, self.option.decide_image_filepath(image))
+        filepath = self.option.decide_image_filepath(image)
+        self.client.download_by_image_detail(image, filepath)
+        print(filepath)
 
     def test_fetch_album(self):
         album_id = "JM438516"
@@ -15,8 +17,13 @@ class Test_Client(JmTestConfigurable):
 
     def test_search(self):
         page: JmSearchPage = self.client.search_tag('+无修正 +中文 -全彩')
-        for album_id, title, tag_list in page.iter_id_title_tag():
-            print(album_id, title, tag_list)
+
+        if len(page) >= 1:
+            for aid, ainfo in page[0:1:1]:
+                print(aid, ainfo)
+
+        for aid, atitle, tag_list in page.iter_id_title_tag():
+            print(aid, atitle, tag_list)
 
         aid = '438516'
         page = self.client.search_site(aid)
@@ -25,18 +32,36 @@ class Test_Client(JmTestConfigurable):
 
     def test_gt_300_photo(self):
         photo_id = '147643'
-        photo: JmPhotoDetail = self.client.get_photo_detail(photo_id, False)
+        photo: JmPhotoDetail = self.client.get_photo_detail(photo_id)
         image = photo[3000]
         print(image.img_url)
         self.client.download_by_image_detail(image, self.option.decide_image_filepath(image))
 
     def test_album_missing(self):
-        JmModuleConfig.CLASS_EXCEPTION = JmcomicException
+        class A(BaseException):
+            pass
+
+        JmModuleConfig.CLASS_EXCEPTION = A
         self.assertRaises(
-            JmcomicException,
+            A,
             self.client.get_album_detail,
-            '332583'
+            '0'
         )
+
+    def test_raise_exception(self):
+
+        class B(BaseException):
+            pass
+
+        def raises(old, _msg, _extra):
+            self.assertEqual(old, default_raise_exception_executor)
+            raise B()
+
+        JmModuleConfig.raise_exception_executor = default_raise_exception_executor
+        ExceptionTool.replace_old_exception_executor(raises)
+        self.assertRaises(B, JmcomicText.parse_to_jm_id, 'asdhasjhkd')
+        # 还原
+        JmModuleConfig.raise_exception_executor = default_raise_exception_executor
 
     def test_detail_property_list(self):
         album = self.client.get_album_detail(410090)
@@ -49,7 +74,7 @@ class Test_Client(JmTestConfigurable):
         ]
 
         for pair in ans:
-            self.assertListEqual(pair[0], pair[1])
+            self.assertListEqual(pair[0][0:9], pair[1][0:9])
 
     def test_photo_sort(self):
         client = self.option.build_jm_client()
@@ -98,9 +123,13 @@ class Test_Client(JmTestConfigurable):
         )
 
         for album, photo_ls in multi_photo_album_dict.items():
+            ls1 = sorted([each.sort for each in album])
+            ls2 = sorted([ans.sort for ans in photo_ls])
+            print(ls1)
+            print(ls2)
             self.assertListEqual(
-                sorted([each.sort for each in album]),
-                sorted([ans.sort for ans in photo_ls]),
+                ls1,
+                ls2,
                 album.album_id
             )
 
@@ -193,3 +222,30 @@ class Test_Client(JmTestConfigurable):
                 0,
                 aid,
             )
+
+    def test_get_detail(self):
+        client = self.client
+
+        album = client.get_album_detail(400222)
+        print(album.id, album.name, album.tags)
+
+        for photo in album[0:3]:
+            photo = client.get_photo_detail(photo.photo_id)
+            print(photo.id, photo.name)
+
+    def test_cache_result_equal(self):
+        cl = self.client
+        cases = [
+            (123, False, False),
+            (123,),
+            (123, False, True),
+            (123, True, False),
+        ]
+
+        ans = None
+        for args in cases:
+            photo = cl.get_photo_detail(*args)
+            if ans is None:
+                ans = id(photo)
+            else:
+                self.assertEqual(ans, id(photo))

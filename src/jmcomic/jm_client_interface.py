@@ -8,6 +8,7 @@ Response Entity
 
 DictModel = AdvancedEasyAccessDict
 
+
 class JmResp(CommonResp):
 
     @property
@@ -22,7 +23,8 @@ class JmResp(CommonResp):
 
     def require_success(self):
         if self.is_not_success:
-            raise JmModuleConfig.exception(self.resp.text)
+            ExceptionTool.raises_resp(self.text, self.resp)
+
 
 class JmImageResp(JmResp):
 
@@ -30,10 +32,7 @@ class JmImageResp(JmResp):
         raise NotImplementedError
 
     def require_success(self):
-        if self.is_success:
-            return
-
-        raise JmModuleConfig.exception(self.get_error_msg())
+        ExceptionTool.require_true(self.is_success, self.get_error_msg())
 
     def get_error_msg(self):
         msg = f'禁漫图片获取失败: [{self.url}]'
@@ -53,16 +52,16 @@ class JmImageResp(JmResp):
 
         if decode_image is False:
             # 不解密图片，直接保存文件
-            JmImageSupport.save_resp_img(
+            JmImageTool.save_resp_img(
                 self,
                 path,
                 need_convert=suffix_not_equal(img_url, path),
             )
         else:
             # 解密图片并保存文件
-            JmImageSupport.decode_and_save(
-                JmImageSupport.get_num_by_url(scramble_id, img_url),
-                JmImageSupport.open_Image(self.content),
+            JmImageTool.decode_and_save(
+                JmImageTool.get_num_by_url(scramble_id, img_url),
+                JmImageTool.open_Image(self.content),
                 path,
             )
 
@@ -71,8 +70,7 @@ class JmApiResp(JmResp):
 
     @classmethod
     def wrap(cls, resp, key_ts):
-        if isinstance(resp, JmApiResp):
-            raise JmModuleConfig.exception('重复包装')
+        ExceptionTool.require_true(not isinstance(resp, JmApiResp), f'重复包装: {resp}')
 
         return cls(resp, key_ts)
 
@@ -152,7 +150,11 @@ class JmDetailClient:
     def get_album_detail(self, album_id) -> JmAlbumDetail:
         raise NotImplementedError
 
-    def get_photo_detail(self, photo_id, fetch_album=True) -> JmPhotoDetail:
+    def get_photo_detail(self,
+                         photo_id,
+                         fetch_album=True,
+                         fetch_scramble_id=True,
+                         ) -> JmPhotoDetail:
         raise NotImplementedError
 
     def of_api_url(self, api_path, domain):
@@ -236,7 +238,7 @@ class JmImageClient:
         @param decode_image: 要保存的是解密后的图还是原图
         """
         if scramble_id is None:
-            scramble_id = JmModuleConfig.SCRAMBLE_0
+            scramble_id = JmModuleConfig.SCRAMBLE_220980
 
         # 请求图片
         resp = self.get_jm_image(img_url)
@@ -249,7 +251,7 @@ class JmImageClient:
         # gif图无需加解密，需要最先判断
         if self.img_is_not_need_to_decode(img_url, resp):
             # 相当于调用save_directly，但使用save_resp_img可以统一调用入口
-            JmImageSupport.save_resp_img(resp, img_save_path, False)
+            JmImageTool.save_resp_img(resp, img_save_path, False)
         else:
             resp.transfer_to(img_save_path, scramble_id, decode_image, img_url)
 
@@ -375,14 +377,22 @@ class JmcomicClient(
     JmSearchAlbumClient,
     Postman,
 ):
-    def get_jmcomic_url(self):
-        return JmModuleConfig.get_jmcomic_url()
-
-    def get_jmcomic_domain_all(self):
-        return JmModuleConfig.get_jmcomic_domain_all()
+    client_key: None
 
     def get_domain_list(self) -> List[str]:
+        """
+        获取当前client的域名配置
+        """
         raise NotImplementedError
 
     def set_domain_list(self, domain_list: List[str]):
+        """
+        设置当前client的域名配置
+        """
         raise NotImplementedError
+
+    def get_html_domain(self, postman=None):
+        return JmModuleConfig.get_html_domain(postman or self.get_root_postman())
+
+    def get_html_domain_all(self, postman=None):
+        return JmModuleConfig.get_html_domain_all(postman or self.get_root_postman())

@@ -14,7 +14,7 @@ class JmcomicText:
     # pattern_html_photo_data_original_list = compile('data-original="(.*?)" id="album_photo_.+?"')
     pattern_html_photo_data_original_domain = compile('src="https://(.*?)/media/albums/blank')
     pattern_html_photo_data_original_0 = compile('data-original="(.*?)"[^>]*?id="album_photo[^>]*?data-page="0"')
-    pattern_html_photo_keywords = compile('<meta name="keywords"[\s\S]*?content="(.*?)"')
+    pattern_html_photo_tags = compile('<meta name="keywords"[\s\S]*?content="(.*?)"')
     pattern_html_photo_series_id = compile('var series_id = (\d+);')
     pattern_html_photo_sort = compile('var sort = (\d+);')
     pattern_html_photo_page_arr = compile('var page_arr = (.*?);')
@@ -57,26 +57,24 @@ class JmcomicText:
 
     @classmethod
     def parse_to_jm_domain(cls, text: str):
-        if text.startswith("https"):
+        if text.startswith(JmModuleConfig.PROT):
             return cls.pattern_jm_domain.search(text)[1]
 
         return text
 
     @classmethod
-    def parse_to_photo_id(cls, text) -> str:
+    def parse_to_jm_id(cls, text) -> str:
         if isinstance(text, int):
             return str(text)
 
-        if not isinstance(text, str):
-            raise JmModuleConfig.exception(f"无法解析jm车号, 参数类型为: {type(text)}")
+        ExceptionTool.require_true(isinstance(text, str), f"无法解析jm车号, 参数类型为: {type(text)}")
 
         # 43210
         if text.isdigit():
             return text
 
         # Jm43210
-        if len(text) <= 2:
-            raise JmModuleConfig.exception(f"无法解析jm车号, 文本为: {text}")
+        ExceptionTool.require_true(len(text) >= 2, f"无法解析jm车号, 文本太短: {text}")
 
         # text: JM12341
         c0 = text[0]
@@ -87,13 +85,8 @@ class JmcomicText:
         else:
             # https://xxx/photo/412038
             match = cls.pattern_jm_pa_id.search(text)
-            if match is None:
-                raise JmModuleConfig.exception(f"无法解析jm车号, 文本为: {text}")
+            ExceptionTool.require_true(match is not None, f"无法解析jm车号, 文本为: {text}")
             return match[2]
-
-    @classmethod
-    def parse_to_album_id(cls, text) -> str:
-        return cls.parse_to_photo_id(text)
 
     @classmethod
     def analyse_jm_pub_html(cls, html: str, domain_keyword=('jm', 'comic')) -> List[str]:
@@ -169,11 +162,10 @@ class JmcomicText:
 
             if field_value is None:
                 if default is None:
-                    JmModuleConfig.raises(
+                    ExceptionTool.raises_regex(
                         f"文本没有匹配上字段：字段名为'{field_name}'，pattern: [{pattern}]",
-                        re_match_html=html,
-                        re_match_field_name=field_name,
-                        re_match_pattern=pattern,
+                        html=html,
+                        pattern=pattern,
                     )
                 else:
                     field_value = default
@@ -182,14 +174,6 @@ class JmcomicText:
             field_dict[field_name] = field_value
 
         return clazz(**field_dict)
-
-    @classmethod
-    def format_photo_url(cls, photo_id, domain=None):
-        return cls.format_url(f'/photo/{cls.parse_to_photo_id(photo_id)}', domain)
-
-    @classmethod
-    def format_album_url(cls, album_id, domain=None):
-        return cls.format_url(f'/album/{cls.parse_to_album_id(album_id)}', domain)
 
     @classmethod
     def format_url(cls, path, domain):
@@ -260,12 +244,20 @@ class JmcomicSearchTool:
         match = cls.pattern_html_search_error.search(html)
         if match is not None:
             topic, reason = match[1], match[2]
-            JmModuleConfig.raises(f'{topic}: {reason}', re_search_html=html)
+            ExceptionTool.raises_regex(
+                f'{topic}: {reason}',
+                html=html,
+                pattern=cls.pattern_html_search_error,
+            )
 
         # 缩小文本范围
         match = cls.pattern_html_search_shorten_for.search(html)
         if match is None:
-            JmModuleConfig.raises('未匹配到搜索结果', re_shorten_html=html)
+            ExceptionTool.raises_regex(
+                '未匹配到搜索结果',
+                html=html,
+                pattern=cls.pattern_html_search_shorten_for,
+            )
         html = match[0]
 
         # 提取结果
@@ -324,6 +316,8 @@ class JmcomicSearchTool:
 
 class JmApiAdaptTool:
     """
+    本类负责把移动端的api返回值，适配为标准的实体类
+
     # album
     {
       "id": 123,
@@ -395,9 +389,9 @@ class JmApiAdaptTool:
         JmPhotoDetail: [
             'name',
             'series_id',
-            ('tags', 'keywords'),
+            'tags',
             ('id', 'photo_id'),
-            ('images', 'page_arr')
+            ('images', 'page_arr'),
 
         ]
     }
@@ -429,7 +423,7 @@ class JmApiAdaptTool:
             if issubclass(clazz, k):
                 return v
 
-        raise AssertionError(clazz)
+        ExceptionTool.raises(f'不支持的类型: {clazz}')
 
     @classmethod
     def post_adapt_album(cls, data: dict, _clazz: type, fields: dict):
@@ -447,16 +441,21 @@ class JmApiAdaptTool:
 
     @classmethod
     def post_adapt_photo(cls, data: dict, _clazz: type, fields: dict):
-        for chapter in data['series']:
+        # 1. 获取sort字段，如果data['series']中没有，使用默认值1
+        sort = 1
+        series: list = data['series']  # series中的sort从1开始
+        for chapter in series:
             chapter = DictModel(chapter)
             if int(chapter.id) == int(data['id']):
-                fields['sort'] = chapter.sort
+                sort = chapter.sort
                 break
 
-        fields['scramble_id'] = '0'
+        fields['sort'] = sort
+        import random
+        fields['data_original_domain'] = random.choice(JmModuleConfig.DOMAIN_API_IMAGE_LIST)
 
 
-class JmImageSupport:
+class JmImageTool:
 
     @classmethod
     def save_resp_img(cls, resp: Any, filepath: str, need_convert=True):
@@ -549,11 +548,11 @@ class JmImageSupport:
 
         if aid < scramble_id:
             return 0
-        elif aid < JmModuleConfig.SCRAMBLE_10:
+        elif aid < JmModuleConfig.SCRAMBLE_268850:
             return 10
         else:
             import hashlib
-            x = 10 if aid < JmModuleConfig.SCRAMBLE_NUM_8 else 8
+            x = 10 if aid < JmModuleConfig.SCRAMBLE_421926 else 8
             s = f"{aid}{filename}"  # 拼接
             s = s.encode()
             s = hashlib.md5(s).hexdigest()
@@ -569,7 +568,7 @@ class JmImageSupport:
         """
         return cls.get_num(
             scramble_id,
-            aid=JmcomicText.parse_to_photo_id(url),
+            aid=JmcomicText.parse_to_jm_id(url),
             filename=of_file_name(url, True),
         )
 
@@ -579,3 +578,83 @@ class JmImageSupport:
         获得图片分割数
         """
         return cls.get_num(detail.scramble_id, detail.aid, detail.img_file_name)
+
+
+class ExceptionTool:
+    """
+    抛异常的工具
+    1: 能简化 if-raise 语句的编写
+    2: 有更好的上下文信息传递方式
+    """
+
+    EXTRA_KEY_RESP = 'resp'
+    EXTRA_KEY_HTML = 'html'
+    EXTRA_KEY_RE_PATTERN = 'pattern'
+
+    @classmethod
+    def raises(cls, msg: str, extra: dict = None):
+        if extra is None:
+            extra = {}
+
+        JmModuleConfig.raise_exception_executor(msg, extra)
+
+    @classmethod
+    def raises_regex(cls,
+                     msg: str,
+                     html: str,
+                     pattern: Pattern,
+                     ):
+        cls.raises(
+            msg, {
+                cls.EXTRA_KEY_HTML: html,
+                cls.EXTRA_KEY_RE_PATTERN: pattern,
+            }
+        )
+
+    @classmethod
+    def raises_resp(cls,
+                    msg: str,
+                    resp,
+                    ):
+        cls.raises(
+            msg, {
+                cls.EXTRA_KEY_RESP: resp
+            }
+        )
+
+    @classmethod
+    def raise_missing(cls,
+                      resp,
+                      org_req_url=None,
+                      ):
+        """
+        抛出本子/章节的异常
+        @param resp: 响应对象
+        @param org_req_url: 原始请求url，可不传
+        """
+        if org_req_url is None:
+            org_req_url = resp.url
+
+        req_type = "本子" if "album" in org_req_url else "章节"
+        cls.raises_resp((
+            f'请求的{req_type}不存在！({org_req_url})\n'
+            '原因可能为:\n'
+            f'1. id有误，检查你的{req_type}id\n'
+            '2. 该漫画只对登录用户可见，请配置你的cookies，或者使用移动端Client（api）\n'
+        ), resp)
+
+    @classmethod
+    def require_true(cls, case: bool, msg: str):
+        if case:
+            return
+
+        cls.raises(msg)
+
+    @classmethod
+    def replace_old_exception_executor(cls, raises: Callable[[Callable, str, dict], None]):
+        old = JmModuleConfig.raise_exception_executor
+
+        def new(msg, extra):
+            raises(old, msg, extra)
+
+        JmModuleConfig.raise_exception_executor = new

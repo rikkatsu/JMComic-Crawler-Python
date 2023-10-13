@@ -17,8 +17,8 @@ def default_postman_constructor(session, **kwargs):
     return Postmans.new_postman(**kwargs)
 
 
-def default_raise_exception_executor(msg, **_kwargs):
-    raise JmModuleConfig.exception(msg)
+def default_raise_exception_executor(msg, _extra):
+    raise JmModuleConfig.CLASS_EXCEPTION(msg)
 
 
 class JmcomicException(Exception):
@@ -47,29 +47,42 @@ class JmModuleConfig:
     }
 
     # 图片分隔相关
-    SCRAMBLE_0 = 220980
-    SCRAMBLE_10 = 268850
-    SCRAMBLE_NUM_8 = 421926  # 2023-02-08后改了图片切割算法
+    SCRAMBLE_220980 = 220980
+    SCRAMBLE_268850 = 268850
+    SCRAMBLE_421926 = 421926  # 2023-02-08后改了图片切割算法
+    SCRAMBLE_CACHE = {}
 
-    # API的相关配置
+    # 移动端API的相关配置
+    # API密钥
     MAGIC_18COMICAPPCONTENT = '18comicAPPContent'
 
-    # 下载时的一些默认值配置
-    default_author = 'default-author'
+    # 域名配置 - 移动端
+    # 图片域名
+    DOMAIN_API_IMAGE_LIST = [f"cdn-msp.jmapiproxy{i}.cc" for i in range(1, 4)]
+    # API域名
+    DOMAIN_API_LIST = [
+        "www.jmapinode1.cc",
+        "www.jmapinode2.cc",
+        "www.jmapinode3.cc",
+        "www.jmapibranch2.cc",
+    ]
 
-    # 模块级别的可重写配置
-    DOMAIN = None
-    DOMAIN_LIST = None
+    # 域名配置 - 网页端
+    # 无需配置，默认为None，需要的时候会发起请求获得
+    DOMAIN_HTML = None
+    DOMAIN_HTML_LIST = None
+
+    # 模块级别的可重写类配置
     CLASS_DOWNLOADER = None
     CLASS_OPTION = None
     CLASS_ALBUM = None
     CLASS_PHOTO = None
     CLASS_IMAGE = None
-    CLASS_CLIENT_IMPL = {}
-    CLASS_EXCEPTION = None
-
+    CLASS_EXCEPTION = JmcomicException
+    # 客户端注册表
+    REGISTRY_CLIENT = {}
     # 插件注册表
-    PLUGIN_REGISTRY = {}
+    REGISTRY_PLUGIN = {}
 
     # 执行debug的函数
     debug_executor = default_jm_debug
@@ -82,6 +95,8 @@ class JmModuleConfig:
     enable_jm_debug = True
     # debug时解码url
     decode_url_when_debug = True
+    # 下载时的一些默认值配置
+    default_author = 'default-author'
 
     @classmethod
     def downloader_class(cls):
@@ -125,48 +140,28 @@ class JmModuleConfig:
 
     @classmethod
     def client_impl_class(cls, client_key: str):
-        client_impl_dict = cls.CLASS_CLIENT_IMPL
+        clazz_dict = cls.REGISTRY_CLIENT
 
-        impl_class = client_impl_dict.get(client_key, None)
-        if impl_class is None:
-            raise NotImplementedError(f'not found client impl class for key: "{client_key}"')
+        clazz = clazz_dict.get(client_key, None)
+        if clazz is None:
+            from .jm_toolkit import ExceptionTool
+            ExceptionTool.raises(f'not found client impl class for key: "{client_key}"')
 
-        return impl_class
-
-    @classmethod
-    def exception(cls, msg: str):
-        """
-        获取jmcomic模块的异常类
-        """
-        if cls.CLASS_EXCEPTION is not None:
-            return cls.CLASS_EXCEPTION(msg)
-
-        return JmcomicException(msg)
+        return clazz
 
     @classmethod
-    def raises(cls, msg: str, **kwargs):
-        """
-        抛出异常，支持把一些上下文参数传递为kwargs
-        真正抛出异常的是函数 cls.raise_exception_executor，用户可自定义此字段
-
-        如果只想抛异常，不想支持一些扩展处理，使用 raise cls.exception(msg)
-        如果想支持一些扩展处理，使用 cls.raises(msg, context=context)
-        """
-        cls.raise_exception_executor(msg, **kwargs)
-
-    @classmethod
-    @field_cache("DOMAIN")
-    def domain(cls, postman=None):
+    @field_cache("DOMAIN_HTML")
+    def get_html_domain(cls, postman=None):
         """
         由于禁漫的域名经常变化，调用此方法可以获取一个当前可用的最新的域名 domain，
         并且设置把 domain 设置为禁漫模块的默认域名。
         这样一来，配置文件也不用配置域名了，一切都在运行时动态获取。
         """
         from .jm_toolkit import JmcomicText
-        return JmcomicText.parse_to_jm_domain(cls.get_jmcomic_url(postman))
+        return JmcomicText.parse_to_jm_domain(cls.get_html_url(postman))
 
     @classmethod
-    def get_jmcomic_url(cls, postman=None):
+    def get_html_url(cls, postman=None):
         """
         访问禁漫的永久网域，从而得到一个可用的禁漫网址
         @return: https://jm-comic2.cc
@@ -174,14 +169,14 @@ class JmModuleConfig:
         postman = postman or cls.new_postman(session=True)
 
         url = postman.with_redirect_catching().get(cls.JM_REDIRECT_URL)
-        cls.jm_debug('获取禁漫URL', f'[{cls.JM_REDIRECT_URL}] → [{url}]')
+        cls.jm_debug('获取禁漫网页URL', f'[{cls.JM_REDIRECT_URL}] → [{url}]')
         return url
 
     @classmethod
-    @field_cache("DOMAIN_LIST")
-    def get_jmcomic_domain_all(cls, postman=None):
+    @field_cache("DOMAIN_HTML_LIST")
+    def get_html_domain_all(cls, postman=None):
         """
-        访问禁漫发布页，得到所有禁漫的域名
+        访问禁漫发布页，得到所有的禁漫网页域名
 
         @return: ['18comic.vip', ..., 'jm365.xyz/ZNPJam'], 最后一个是【APP軟件下載】
         """
@@ -189,12 +184,13 @@ class JmModuleConfig:
 
         resp = postman.get(cls.JM_PUB_URL)
         if resp.status_code != 200:
-            raise JmModuleConfig.exception(resp.text)
+            from .jm_toolkit import ExceptionTool
+            ExceptionTool.raises_resp(f'请求失败，访问禁漫发布页获取所有域名，HTTP状态码为: {resp.status_code}', resp)
 
         from .jm_toolkit import JmcomicText
         domain_list = JmcomicText.analyse_jm_pub_html(resp.text)
 
-        cls.jm_debug('获取禁漫全部域名', f'[{resp.url}] → {domain_list}')
+        cls.jm_debug('获取禁漫网页全部域名', f'[{resp.url}] → {domain_list}')
         return domain_list
 
     @classmethod
@@ -254,14 +250,20 @@ class JmModuleConfig:
     }
 
     # option 默认配置字典
+    JM_OPTION_VER = '2.1'
+    CLIENT_IMPL_DEFAULT = 'html'
+
     default_option_dict: dict = {
-        'version': '2.0',
+        'version': JM_OPTION_VER,
         'debug': None,
         'dir_rule': {'rule': 'Bd_Pname', 'base_dir': None},
         'download': {
             'cache': True,
             'image': {'decode': True, 'suffix': None},
-            'threading': {'batch_count': 30},
+            'threading': {
+                'image': 30,
+                'photo': None,
+            },
         },
         'client': {
             'cache': None,
@@ -273,7 +275,7 @@ class JmModuleConfig:
                     'headers': None,
                 }
             },
-            'impl': 'html',
+            'impl': None,
             'retry_times': 5
         },
         'plugin': {},
@@ -304,20 +306,31 @@ class JmModuleConfig:
         if client['cache'] is None:
             client['cache'] = True
 
-        # headers
-        meta_data = client['postman']['meta_data']
-        if meta_data['headers'] is None:
-            meta_data['headers'] = cls.headers()
+        # client impl
+        if client['impl'] is None:
+            client['impl'] = cls.CLIENT_IMPL_DEFAULT
+
+        # threading photo
+        dt = option_dict['download']['threading']
+        if dt['photo'] is None:
+            import os
+            dt['photo'] = os.cpu_count()
 
         return option_dict
 
     @classmethod
     def register_plugin(cls, plugin_class):
-        cls.PLUGIN_REGISTRY[plugin_class.plugin_key] = plugin_class
+        from .jm_toolkit import ExceptionTool
+        ExceptionTool.require_true(getattr(plugin_class, 'plugin_key', None) is not None,
+                                   f'未配置plugin_key, class: {plugin_class}')
+        cls.REGISTRY_PLUGIN[plugin_class.plugin_key] = plugin_class
 
     @classmethod
     def register_client(cls, client_class):
-        cls.CLASS_CLIENT_IMPL[client_class.client_key] = client_class
+        from .jm_toolkit import ExceptionTool
+        ExceptionTool.require_true(getattr(client_class, 'client_key', None) is not None,
+                                   f'未配置client_key, class: {client_class}')
+        cls.REGISTRY_CLIENT[client_class.client_key] = client_class
 
 
 jm_debug = JmModuleConfig.jm_debug

@@ -1,5 +1,5 @@
 """
-该文件存放的是option扩展功能类
+该文件存放的是option插件
 """
 
 from .jm_option import *
@@ -27,12 +27,10 @@ class JmOptionPlugin:
         return cls(option)
 
 
-"""
-扩展功能：登录禁漫，并保存登录后的cookies，让所有client都带上此cookies
-"""
-
-
 class JmLoginPlugin(JmOptionPlugin):
+    """
+    功能：登录禁漫，并保存登录后的cookies，让所有client都带上此cookies
+    """
     plugin_key = 'login'
 
     def invoke(self, username, password) -> None:
@@ -152,8 +150,10 @@ class UsageLogPlugin(JmOptionPlugin):
             sleep(interval)
 
 
-# 参考: https://github.com/hect0x7/JMComic-Crawler-Python/issues/95
 class FindUpdatePlugin(JmOptionPlugin):
+    """
+    参考: https://github.com/hect0x7/JMComic-Crawler-Python/issues/95
+    """
     plugin_key = 'find_update'
 
     def invoke(self, **kwargs) -> None:
@@ -238,7 +238,7 @@ class ZipPlugin(JmOptionPlugin):
                 dir_zip_dict[dir_path] = zip_path
 
         else:
-            raise NotImplementedError(f'level: {level}')
+            ExceptionTool.raises(f'Not Implemented Zip Level: {level}')
 
         self.after_zip(dir_zip_dict)
 
@@ -327,7 +327,27 @@ class ZipPlugin(JmOptionPlugin):
                 jm_debug('plugin.zip.remove', f'删除文件夹: {d}')
 
 
-JmModuleConfig.register_plugin(JmLoginPlugin)
-JmModuleConfig.register_plugin(UsageLogPlugin)
-JmModuleConfig.register_plugin(FindUpdatePlugin)
-JmModuleConfig.register_plugin(ZipPlugin)
+class ClientProxyPlugin(JmOptionPlugin):
+    plugin_key = 'client_proxy'
+
+    def invoke(self,
+               proxy_client_key,
+               whitelist=None,
+               **kwargs,
+               ) -> None:
+        if whitelist is not None:
+            whitelist = set(whitelist)
+
+        clazz = JmModuleConfig.client_impl_class(proxy_client_key)
+        clazz_init_kwargs = kwargs
+        new_jm_client = self.option.new_jm_client
+
+        def hook_new_jm_client(*args, **kwargs):
+            client = new_jm_client(*args, **kwargs)
+            if whitelist is not None and client.client_key not in whitelist:
+                return client
+
+            jm_debug('plugin.client_proxy', f'proxy client {client} with {proxy_client_key}')
+            return clazz(client, **clazz_init_kwargs)
+
+        self.option.new_jm_client = hook_new_jm_client

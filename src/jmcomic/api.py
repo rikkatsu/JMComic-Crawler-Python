@@ -22,7 +22,7 @@ def download_batch(download_api,
 
     return multi_thread_launcher(
         iter_objs=set(
-            JmcomicText.parse_to_album_id(jmid)
+            JmcomicText.parse_to_jm_id(jmid)
             for jmid in jm_id_iter
         ),
         apply_each_obj_func=lambda aid: download_api(aid, option, downloader),
@@ -68,3 +68,12 @@ def new_downloader(option=None, downloader=None) -> JmDownloader:
 
 def create_option(filepath):
     return JmModuleConfig.option_class().from_file(filepath)
+
+
+def create_option_by_env(env_name='JM_OPTION_PATH'):
+    from .cl import get_env
+
+    filepath = get_env(env_name, None)
+    ExceptionTool.require_true(filepath is not None,
+                               f'未配置环境变量: {env_name}，请配置为option的文件路径')
+    return create_option(filepath)

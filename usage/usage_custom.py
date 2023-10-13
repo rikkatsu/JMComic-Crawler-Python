@@ -56,38 +56,35 @@ def custom_client_class():
     # 默认情况下，JmOption使用client类是根据配置项 `client.impl` 决定的
     # JmOption会根据`client.impl`到 JmModuleConfig.CLASS_CLIENT_IMPL 中查找
 
-    # 你可以自定义一个`client.impl`，例如 'my-client'，
-    # 或者使用jmcomic内置 'html' 和 'api'，
-    # 然后把你的`client.impl`和类一起配置到JmModuleConfig中
+    # 自定义client的步骤如下
 
     # 1. 自定义Client类
     class MyClient(JmHtmlClient):
+        client_key = 'myclient'
         pass
 
-    # 2. 让你的配置类生效
-    JmModuleConfig.CLASS_CLIENT_IMPL['my-client'] = MyClient
+    # 2. 让MyClient生效
+    JmModuleConfig.register_client(MyClient)
 
     # 3. 在配置文件中使用你定义的client.impl，后续使用这个option即可
     """
     client:
-        impl: 'my-client'
+        impl: myclient
     """
 
 
 def custom_album_photo_image_detail_class():
     """
     该函数演示替换实体类（本子/章节/图片）
-    """
 
-    # 在使用路径规则 DirRule 时，可能会遇到需要自定义实体类属性的情况，例如：
-    """
+    在使用路径规则 DirRule 时，可能会遇到需要自定义实体类属性的情况，例如：
     dir_rule:
         base_dir: ${workspace}
         rule: Bd_Acustom_Pcustom
-    """
 
-    # 上面的Acustom，Pcustom都是自定义字段
-    # 如果你想要使用这种自定义字段，你就需要替换默认的实体类，例如
+    上面的Acustom，Pcustom都是自定义字段
+    如果你想要使用这种自定义字段，你就需要替换默认的实体类，方式如下
+    """
 
     # 自定义本子实体类
     class MyAlbum(JmAlbumDetail):
@@ -103,14 +100,21 @@ def custom_album_photo_image_detail_class():
         def custom(self):
             return f'custom_{self.title}'
 
-    # 自定义图片实体类
-    class MyImage(JmImageDetail):
-        pass
+    """
+    v2.3.3: 支持更灵活的自定义方式，可以使用函数，效果同上，示例见下
+    """
+
+    class MyAlbum2(JmAlbumDetail):
+
+        def get_dirname(self, ref: str) -> str:
+            if ref == 'custom':
+                return f'custom_{self.name}'
+
+            return super().get_dirname(ref)
 
     # 最后，替换默认实体类来让你的自定义类生效
     JmModuleConfig.CLASS_ALBUM = MyAlbum
     JmModuleConfig.CLASS_PHOTO = MyPhoto
-    JmModuleConfig.CLASS_IMAGE = MyImage
 
 
 def custom_jm_debug():
@@ -133,30 +137,3 @@ def custom_jm_debug():
 
     # 2. 让my_debug生效
     JmModuleConfig.debug_executor = my_debug
-
-
-def custom_exception_raise():
-    """
-    该函数演示jmcomic的异常机制
-    """
-
-    # jmcomic 代码在运行过程中可能抛出异常，以获取album实体类为例：
-    album = client.get_album_detail('999999')
-
-    # 上面这行代码用于获取本子id为 999999 的JmAlbumDetail
-    # 如果本子不存在，则会抛出异常，异常类默认是 JmcomicException
-
-    # 你可以自定义抛出的异常类，做法如下：
-    # 1. 自定义异常类
-    class MyExceptionClass(Exception):
-        pass
-
-    # 2. 替换默认异常类
-    JmModuleConfig.CLASS_EXCEPTION = MyExceptionClass
-
-    # 这样一来，抛出的异常类就是 MyExceptionClass
-    try:
-        album = client.get_album_detail('999999')
-    except MyExceptionClass as e:
-        print('捕获MyExceptionClass异常')
-        pass
